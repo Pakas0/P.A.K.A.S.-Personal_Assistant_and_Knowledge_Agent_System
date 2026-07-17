@@ -7,7 +7,7 @@ from config import ALLOWED_USER_ID
 from executor import classify_command, execute_command, TIER_AUTO, TIER_NOTIFY, TIER_APPROVAL
 from utils.approval import ApprovalView
 from utils.logger import logger
-from database import log_command, get_setting
+from database import log_command, get_setting, save_message
 from utils.llm import generate_response
 
 class VPS(commands.Cog):
@@ -20,6 +20,19 @@ class VPS(commands.Cog):
             return False
         return True
 
+    async def _save_to_memory(self, interaction: discord.Interaction, command: str, output: str, exit_code: int):
+        """Helper to save command execution into chat history memory"""
+        try:
+            thread_id = str(interaction.channel_id)
+            history_output = output
+            if len(history_output) > 1500:
+                history_output = history_output[:1500] + "\n...(output truncated in memory)..."
+            
+            await save_message(thread_id, "user", f"[Slash Command Executed: {command}]")
+            await save_message(thread_id, "assistant", f"**Command Output (Exit code {exit_code}):**\n```\n{history_output}\n```")
+        except Exception as me_e:
+            logger.error(f"Failed to save command to conversation memory: {me_e}")
+
     async def _handle_execution(self, interaction: discord.Interaction, command: str, ephemeral=False):
         """Helper to handle the tier logic and execution of a command"""
         tier = classify_command(command)
@@ -28,6 +41,7 @@ class VPS(commands.Cog):
             await interaction.response.defer(ephemeral=ephemeral)
             output, exit_code = await execute_command(command)
             await log_command(command, tier, None, output, exit_code)
+            await self._save_to_memory(interaction, command, output, exit_code)
             
             # Format output
             formatted_output = f"**Executed:** `{command}`\n```\n{output[:1900]}\n```"
@@ -40,6 +54,7 @@ class VPS(commands.Cog):
             await interaction.response.defer(ephemeral=ephemeral)
             output, exit_code = await execute_command(command)
             await log_command(command, tier, None, output, exit_code)
+            await self._save_to_memory(interaction, command, output, exit_code)
             
             formatted_output = f"⚠️ **Executed (Auto+Notify):** `{command}`\n✅ Done with exit code {exit_code}.\n```\n{output[:1800]}\n```"
             await interaction.followup.send(formatted_output)
@@ -62,6 +77,7 @@ class VPS(commands.Cog):
                 # Approved
                 output, exit_code = await execute_command(command)
                 await log_command(command, tier, True, output, exit_code)
+                await self._save_to_memory(interaction, command, output, exit_code)
                 
                 formatted_output = f"✅ **Executed after approval:** `{command}`\n```\n{output[:1800]}\n```"
                 await interaction.followup.send(formatted_output)
@@ -148,6 +164,7 @@ class VPS(commands.Cog):
             if tier == TIER_AUTO or tier == TIER_NOTIFY:
                 output, exit_code = await execute_command(generated_command)
                 await log_command(generated_command, tier, None, output, exit_code)
+                await self._save_to_memory(interaction, generated_command, output, exit_code)
                 
                 prefix = "⚠️ **Auto+Notify**" if tier == TIER_NOTIFY else "✅ **Auto**"
                 
@@ -170,6 +187,7 @@ class VPS(commands.Cog):
                 elif view.value is True:
                     output, exit_code = await execute_command(generated_command)
                     await log_command(generated_command, tier, True, output, exit_code)
+                    await self._save_to_memory(interaction, generated_command, output, exit_code)
                     await msg.reply(f"✅ **Executed:**\n```\n{output[:1900]}\n```")
                 else:
                     await log_command(generated_command, tier, False, "Rejected by user", -1)
