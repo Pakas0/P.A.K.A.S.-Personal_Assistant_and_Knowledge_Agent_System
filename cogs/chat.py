@@ -47,8 +47,35 @@ class Chat(commands.Cog):
                 override_used = True
                 break
             
-        if not content:
-            # If the user only sent "@alias " with no content
+        # Read attachments if any (text-based files up to 100KB)
+        attachment_text = ""
+        if message.attachments:
+            for attachment in message.attachments:
+                is_text = False
+                exts = ('.txt', '.py', '.js', '.json', '.md', '.log', '.env', '.yaml', '.yml', '.ini', '.cfg', '.conf', '.sh', '.bash', '.ts', '.tsx', '.html', '.css')
+                if attachment.filename.lower().endswith(exts):
+                    is_text = True
+                elif attachment.content_type and (attachment.content_type.startswith('text/') or attachment.content_type == 'application/json'):
+                    is_text = True
+                
+                if is_text:
+                    if attachment.size > 100 * 1024:  # 100 KB limit
+                        attachment_text += f"\n\n[Attachment {attachment.filename} is too large and was skipped (Max: 100KB)]"
+                        continue
+                    try:
+                        file_bytes = await attachment.read()
+                        file_text = file_bytes.decode('utf-8', errors='ignore')
+                        attachment_text += f"\n\n--- Attachment: {attachment.filename} ---\n{file_text}\n-----------------------"
+                    except Exception as attr_e:
+                        logger.error(f"Failed to read attachment {attachment.filename}: {attr_e}")
+                        attachment_text += f"\n\n[Error reading attachment: {attachment.filename}]"
+        
+        combined_content = content
+        if attachment_text:
+            combined_content += attachment_text
+
+        if not combined_content:
+            # If the user only sent "@alias " with no content and no readable attachments
             return
 
         thread_id = str(message.channel.id)
@@ -59,14 +86,14 @@ class Chat(commands.Cog):
                 history = await get_history(thread_id, limit=20)
                 
                 messages = history.copy()
-                messages.append({"role": "user", "content": content})
+                messages.append({"role": "user", "content": combined_content})
                 
                 system_prompt = "You are P.A.K.A.S, a personal AI assistant and VPS manager for your owner. You are running as a Discord bot. Be helpful, concise, and technical."
                 
                 response_text = await generate_response(model_alias, messages, system_prompt=system_prompt)
                 
                 # Save to DB
-                await save_message(thread_id, "user", content, model_alias if override_used else None)
+                await save_message(thread_id, "user", combined_content, model_alias if override_used else None)
                 await save_message(thread_id, "assistant", response_text, model_alias)
                 
                 # Send response (split if > 2000 chars to avoid Discord limits)
