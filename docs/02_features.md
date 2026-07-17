@@ -180,3 +180,4 @@ Alert tidak repeat dalam 30 menit untuk kondisi yang sama (cooldown).
 6. **Smart Explain Error**: Jika hasil command `/exec` (ataupun *natural language command*) Anda gagal / `exit_code != 0`, AI akan mengirim pesan penjelasan dan solusi otomatis.
 7. **Long Message Auto-Split**: Menghindari batasan limit *Discord* untuk pesan-pesan instruksi yang panjang (diberikan TL;DR secara singkat).
 8. **Auto Document Generation**: Mampu menggenerate dokumen laporan (format `.docx`, `.xlsx`, `.pptx`, `.pdf`) menggunakan ekstensi AI dan mengirimkannya langsung ke Discord Anda via `discord.File` dengan basis Python-native murni tanpa *browser-renderer*.
+9. **Auto Command Execution**: Bot dapat mengeksekusi perintah shell / bash secara otonom lewat bahasa manusia di chat. Sistem secara otomatis menolak setiap panggilan destruktif (Tier Approval) dan hanya mengizinkan perintah aman.

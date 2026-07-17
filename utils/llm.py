@@ -4,7 +4,8 @@ import logging
 from config import GEMINI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY, NINER_ROUTER_URL, MODELS
 from utils.search import web_search
 from utils.documents import generate_document
-from database import save_tool_call, save_tool_result
+from executor import classify_command, execute_command, TIER_APPROVAL
+from database import save_tool_call, save_tool_result, log_command
 
 logger = logging.getLogger("discord_agent")
 
@@ -62,6 +63,24 @@ GENERATE_DOCUMENT_TOOL_SCHEMA = {
                 }
             },
             "required": ["format", "title"]
+        }
+    }
+}
+
+EXECUTE_COMMAND_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "execute_shell_command",
+        "description": "Jalankan perintah shell/bash di VPS secara otonom. Gunakan ini jika user meminta untuk mengecek resource (RAM/Disk), melihat isi direktori, membaca file log, dsb. PERINGATAN: Jangan gunakan untuk perintah destruktif (rm, apt, reboot, dll) karena akan ditolak otomatis oleh sistem keamanan.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Perintah bash yang ingin dieksekusi (misal: 'free -m', 'ls -la', 'cat /var/log/syslog')"
+                }
+            },
+            "required": ["command"]
         }
     }
 }
@@ -171,7 +190,7 @@ async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id:
             response = await client.chat.completions.create(
                 model=model_id,
                 messages=formatted_messages,
-                tools=[WEB_SEARCH_TOOL_SCHEMA, GENERATE_DOCUMENT_TOOL_SCHEMA],
+                tools=[WEB_SEARCH_TOOL_SCHEMA, GENERATE_DOCUMENT_TOOL_SCHEMA, EXECUTE_COMMAND_TOOL_SCHEMA],
                 tool_choice="auto"
             )
         except Exception as e:
@@ -233,6 +252,36 @@ async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id:
                             generated_files.append(res["file_path"])
                     except Exception as e:
                         res_str = json.dumps({"error": str(e)})
+                        
+                elif func_name == "execute_shell_command":
+                    try:
+                        args_dict = json.loads(func_args)
+                        cmd = args_dict.get("command", "")
+                        
+                        if indicator_msg:
+                            await indicator_msg.edit(content=f"💻 Mengeksekusi: `{cmd}`...")
+                            
+                        # Security Check
+                        tier = classify_command(cmd)
+                        if tier == TIER_APPROVAL:
+                            res_str = json.dumps({
+                                "error": "Tindakan ditolak oleh sistem keamanan (Guardrails). Perintah ini bersifat destruktif/berisiko tinggi dan membutuhkan otorisasi manual. Beritahu user untuk menjalankan perintah ini secara eksplisit menggunakan slash command /exec atau /do."
+                            })
+                        else:
+                            # TIER_AUTO or TIER_NOTIFY
+                            output, exit_code = await execute_command(cmd)
+                            await log_command(cmd, tier, None, output, exit_code)
+                            
+                            res_dict = {
+                                "command": cmd,
+                                "exit_code": exit_code,
+                                "output": output
+                            }
+                            res_str = json.dumps(res_dict)
+                            
+                    except Exception as e:
+                        res_str = json.dumps({"error": str(e)})
+                        
                 else:
                     res_str = json.dumps({"error": f"Unknown tool: {func_name}"})
                         
