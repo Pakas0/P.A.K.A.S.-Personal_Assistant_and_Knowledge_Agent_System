@@ -11,17 +11,34 @@ async def send_long_response(message: discord.Message, text: str, tldr_threshold
     3. If > tldr_threshold: generate TL;DR first via LLM.
     """
     try:
+        text = text or ""
+        
         discord_files = []
         if file_paths:
+            logger.info(f"Attempting to attach {len(file_paths)} files: {file_paths}")
             for path in file_paths:
-                if os.path.exists(path) and os.path.getsize(path) < 20 * 1024 * 1024:
-                    discord_files.append(discord.File(path))
+                if os.path.exists(path):
+                    size = os.path.getsize(path)
+                    logger.info(f"File {path} exists. Size: {size} bytes")
+                    if size < 25 * 1024 * 1024: # Discord limit is 25MB for free tier usually, but 20MB is safe
+                        discord_files.append(discord.File(path))
+                    else:
+                        logger.warning(f"File {path} is too large ({size} bytes)")
+                else:
+                    logger.warning(f"File {path} does not exist!")
                     
+        # If text is empty and we have files, provide a default text so discord doesn't reject it
+        if not text and discord_files:
+            text = "📄 Berikut adalah file yang Anda minta:"
+            
         if len(text) <= 2000:
             if discord_files:
+                logger.info(f"Sending message with {len(discord_files)} attachments.")
                 await message.reply(text, files=discord_files)
-            else:
+            elif text:
                 await message.reply(text)
+            else:
+                logger.warning("Empty text and no files to send!")
             _cleanup_files(file_paths)
             return
             
@@ -50,6 +67,7 @@ async def send_long_response(message: discord.Message, text: str, tldr_threshold
         for i, chunk in enumerate(chunks):
             if chunk.strip():
                 if i == len(chunks) - 1 and discord_files:
+                    logger.info(f"Sending last chunk with {len(discord_files)} attachments.")
                     await message.channel.send(chunk, files=discord_files)
                 else:
                     await message.channel.send(chunk)
