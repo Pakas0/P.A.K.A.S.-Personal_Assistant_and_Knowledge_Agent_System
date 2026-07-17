@@ -25,6 +25,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # Optional Proxy URL
 NINER_ROUTER_URL = os.getenv("NINER_ROUTER_URL")
+NINER_ROUTER_KEY = os.getenv("NINER_ROUTER_KEY", "dummy-key")
 
 # Application Default Settings
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini")

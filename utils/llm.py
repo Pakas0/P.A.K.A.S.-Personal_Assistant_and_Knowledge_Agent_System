@@ -35,9 +35,9 @@ async def generate_response(model_alias: str, messages: list[dict], system_promp
 async def _generate_via_proxy(model_id: str, messages: list[dict], system_prompt: str = None) -> str:
     """Uses OpenAI compatible format via proxy URL."""
     from openai import AsyncOpenAI
+    from config import NINER_ROUTER_KEY
     
-    # We pass a dummy api_key because OpenAI client requires it, but the proxy might not
-    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy-key"), base_url=NINER_ROUTER_URL)
+    client = AsyncOpenAI(api_key=NINER_ROUTER_KEY, base_url=NINER_ROUTER_URL)
     
     formatted_messages = []
     if system_prompt:
