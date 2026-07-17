@@ -14,8 +14,20 @@ async def generate_response(model_alias: str, messages: list[dict], system_promp
     
     model_id = MODELS[model_alias]
     
+    # Determine if we should use direct SDK or proxy mode
+    use_proxy = False
+    if NINER_ROUTER_URL:
+        # Check if we have native keys to bypass the proxy
+        if model_alias == "gemini" and GEMINI_API_KEY:
+            use_proxy = False
+        elif model_alias == "claude" and ANTHROPIC_API_KEY:
+            use_proxy = False
+        # Note: Groq is routed through proxy if NINER_ROUTER_URL is present, due to VPS geoblocking
+        else:
+            use_proxy = True
+
     try:
-        if NINER_ROUTER_URL:
+        if use_proxy:
             logger.info(f"Using proxy mode (NINER_ROUTER_URL) for {model_alias}")
             return await _generate_via_proxy(model_id, messages, system_prompt)
         else:
