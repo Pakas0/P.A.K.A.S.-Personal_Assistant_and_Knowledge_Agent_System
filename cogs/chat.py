@@ -93,10 +93,17 @@ class Chat(commands.Cog):
                 messages = history.copy()
                 messages.append({"role": "user", "content": combined_content})
                 
-                system_prompt = "You are P.A.K.A.S, a personal AI assistant and VPS manager for your owner. You are running as a Discord bot. Be helpful, concise, and technical."
+                system_prompt = (
+                    "You are P.A.K.A.S, a personal AI assistant and VPS manager for Bagaskara (Owner). You are running as a Discord bot. "
+                    "Be helpful, concise, and technical. "
+                    "IMPORTANT INSTRUCTIONS: You have access to tools (functions) to help you perform tasks. You have maximum of 6x iteration, be carefull what you do and what you say."
+                    "If the user asks you to check the VPS (e.g. check RAM, pm2, logs, storage), YOU MUST IMMEDIATELY CALL THE `execute_shell_command` tool with the appropriate bash command. Do NOT ask for permission or wait for the user to provide the command. Just use the tool. "
+                    "If the user asks you to search the web, use the `web_search` tool. "
+                    "If the user asks to generate a document, use the `generate_document` tool."
+                )
                 
                 # Use call_llm_with_tools to handle tool calls
-                response_text, generated_files = await call_llm_with_tools(model_alias, messages, thread_id, system_prompt, max_iterations=3, message_obj=message)
+                response_text, generated_files = await call_llm_with_tools(model_alias, messages, thread_id, system_prompt, max_iterations=6, message_obj=message)
                 
                 # Save to DB
                 await save_message(thread_id, "user", combined_content, model_alias if override_used else None)
