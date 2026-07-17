@@ -1,0 +1,8 @@
+discord.py
+google-generativeai
+groq
+anthropic
+aiosqlite
+python-dotenv
+psutil
+openai
