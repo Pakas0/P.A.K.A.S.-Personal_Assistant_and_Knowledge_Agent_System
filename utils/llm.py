@@ -164,39 +164,22 @@ async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id:
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
             
-        pending_tool_call_id = None
-        fake_id_counter = 0
-            
         for m in current_messages:
-            # Drop our custom 'tool_name' field before sending to standard API
-            fm = {"role": m["role"], "content": m["content"]}
+            fm = {}
             if m["role"] == "tool_call":
                 fm["role"] = "assistant"
-                t_id = m.get("tool_call_id")
-                if not t_id:
-                    fake_id_counter += 1
-                    t_id = f"call_fake_{fake_id_counter}"
-                    pending_tool_call_id = t_id
-                    
-                fm["tool_calls"] = [
-                    {
-                        "id": t_id,
-                        "type": "function",
-                        "function": {
-                            "name": m.get("tool_name", "web_search"),
-                            "arguments": m["content"]
-                        }
-                    }
-                ]
-                fm["content"] = None
+                fm["content"] = f"*[Memanggil alat {m.get('tool_name', 'unknown')}: {m.get('content', '')}]*"
             elif m["role"] == "tool_result":
-                fm["role"] = "tool"
-                t_id = m.get("tool_call_id")
-                if not t_id:
-                    t_id = pending_tool_call_id or f"call_fake_{fake_id_counter}"
-                    
-                fm["tool_call_id"] = t_id
-                fm["name"] = m.get("tool_name", "web_search")
+                fm["role"] = "user"
+                # Truncate content slightly if needed for history
+                content = m.get("content", "")
+                if len(content) > 1500:
+                    content = content[:1500] + "...(truncated)"
+                fm["content"] = f"*[Hasil alat {m.get('tool_name', 'unknown')}]:*\n{content}"
+            else:
+                fm["role"] = m["role"]
+                fm["content"] = m["content"]
+                
             formatted_messages.append(fm)
             
         try:
@@ -218,14 +201,12 @@ async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id:
             for tool_call in msg.tool_calls:
                 func_name = tool_call.function.name
                 func_args = tool_call.function.arguments
-                t_id = tool_call.id
                 
                 await save_tool_call(thread_id, func_name, func_args, model_alias)
                 current_messages.append({
                     "role": "tool_call", 
                     "content": func_args, 
-                    "tool_name": func_name,
-                    "tool_call_id": t_id
+                    "tool_name": func_name
                 })
                 
                 
@@ -313,8 +294,7 @@ async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id:
                     current_messages.append({
                         "role": "tool_result", 
                         "content": res_str, 
-                        "tool_name": func_name,
-                        "tool_call_id": t_id
+                        "tool_name": func_name
                     })
         else:
             if indicator_msg:
