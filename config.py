@@ -38,7 +38,8 @@ MODELS = {
     # Ditambahkan untuk 9Router / Proxy
     "glm4.7-flash": "cf/@cf/zai-org/glm-4.7-flash",
     "kimi2.5": "cf/@cf/moonshotai/kimi-k2.5",
-    "kimi2.6" : "cf/@cf/moonshotai/kimi-k2.6"       
+    "kimi2.6" : "cf/@cf/moonshotai/kimi-k2.6",
+    "deepseek-v4-free" : "oc/deepseek-v4-flash-free" 
 }
 
 # Directories and Paths
