@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import datetime
-from config import ALLOWED_USER_ID
+from config import ALLOWED_USER_ID, MODELS
 from database import get_setting, get_history, save_message, clear_history
 from utils.logger import logger
 from utils.llm import generate_response
@@ -37,23 +37,18 @@ class Chat(commands.Cog):
             
         override_used = False
         
-        # Detect prefix to override model for this message only
+        # Detect prefix to override model for this message only dynamically
         lower_content = content.lower()
-        if lower_content.startswith("@gemini"):
-            model_alias = "gemini"
-            content = content[len("@gemini"):].strip()
-            override_used = True
-        elif lower_content.startswith("@groq"):
-            model_alias = "groq"
-            content = content[len("@groq"):].strip()
-            override_used = True
-        elif lower_content.startswith("@claude"):
-            model_alias = "claude"
-            content = content[len("@claude"):].strip()
-            override_used = True
+        for alias in MODELS.keys():
+            prefix = f"@{alias}"
+            if lower_content.startswith(prefix):
+                model_alias = alias
+                content = content[len(prefix):].strip()
+                override_used = True
+                break
             
         if not content:
-            # If the user only sent "@gemini " with no content
+            # If the user only sent "@alias " with no content
             return
 
         thread_id = str(message.channel.id)

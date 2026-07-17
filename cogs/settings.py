@@ -32,17 +32,29 @@ class Settings(commands.Cog):
 
     @app_commands.command(name="setmodel", description="Change the default LLM model")
     @app_commands.describe(model="The model to use as default")
-    @app_commands.choices(model=[
-        app_commands.Choice(name="Gemini (Google)", value="gemini"),
-        app_commands.Choice(name="Groq (Llama 3.3)", value="groq"),
-        app_commands.Choice(name="Claude (Anthropic)", value="claude")
-    ])
-    async def setmodel(self, interaction: discord.Interaction, model: app_commands.Choice[str]):
-        new_model = model.value
-        await set_setting('default_model', new_model)
+    async def setmodel(self, interaction: discord.Interaction, model: str):
+        if model not in MODELS:
+            await interaction.response.send_message(
+                f"❌ Unknown model alias: `{model}`. Available: {', '.join(MODELS.keys())}", 
+                ephemeral=True
+            )
+            return
+
+        await set_setting('default_model', model)
         
-        logger.info(f"Default model changed to {new_model} by user {interaction.user.id}")
-        await interaction.response.send_message(f"✅ Default model successfully set to **{model.name}** (`{new_model}`).")
+        logger.info(f"Default model changed to {model} by user {interaction.user.id}")
+        await interaction.response.send_message(f"✅ Default model successfully set to **{model}** (`{MODELS[model]}`).")
+
+    @setmodel.autocomplete('model')
+    async def setmodel_autocomplete(
+        self, 
+        interaction: discord.Interaction, 
+        current: str
+    ) -> list[app_commands.Choice[str]]:
+        return [
+            app_commands.Choice(name=f"{alias} ({MODELS[alias]})", value=alias)
+            for alias in MODELS.keys() if current.lower() in alias.lower()
+        ][:25]
 
     @app_commands.command(name="modelinfo", description="Show the currently active default model")
     async def modelinfo(self, interaction: discord.Interaction):
@@ -52,11 +64,13 @@ class Settings(commands.Cog):
             
         model_id = MODELS.get(current_model, "Unknown")
         
+        available_aliases = ", ".join([f"`@{m}`" for m in MODELS.keys()])
+        
         await interaction.response.send_message(
             f"ℹ️ **Current Default Model**\n"
             f"- **Alias:** `{current_model}`\n"
             f"- **Model ID:** `{model_id}`\n\n"
-            f"*You can temporarily override this by starting your message with `@gemini`, `@groq`, or `@claude`.*"
+            f"*You can temporarily override this by starting your message with: {available_aliases}.*"
         )
 
     @app_commands.command(name="help", description="Show all available commands")

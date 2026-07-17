@@ -34,7 +34,11 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini")
 MODELS = {
     "gemini": "gemini-2.0-flash",
     "groq": "llama-3.3-70b-versatile",
-    "claude": "claude-3-5-haiku-20241022",
+    "claude": "claude-3-5-haiku-20241022",     
+    # Ditambahkan untuk 9Router / Proxy
+    "glm4.7-flash": "cf/@cf/zai-org/glm-4.7-flash",
+    "kimi2.5": "cf/@cf/moonshotai/kimi-k2.5",
+    "kimi2.6" : "cf/@cf/moonshotai/kimi-k2.6"       
 }
 
 # Directories and Paths
