@@ -6,3 +6,8 @@ aiosqlite
 python-dotenv
 psutil
 openai
+httpx
+python-docx
+openpyxl
+python-pptx
+fpdf2

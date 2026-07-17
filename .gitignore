@@ -12,6 +12,8 @@ __pycache__/
 
 # Database
 data/
+!data/.keep
+data/tmp_exports/
 *.db
 *.sqlite3
 
@@ -20,3 +22,6 @@ data/
 
 # VS Code
 .vscode/
+
+#Docs
+docs/.07_prompt.md

@@ -6,9 +6,12 @@ load_dotenv()
 
 # Discord settings
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
-ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
-ALERT_CHANNEL_ID = os.getenv("ALERT_CHANNEL_ID")
+DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID") # Optional
+ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", 0))
+ALERT_CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID", 0))
+
+# Custom channel for digest, falls back to ALERT_CHANNEL_ID
+DIGEST_CHANNEL_ID = int(os.getenv("DIGEST_CHANNEL_ID", ALERT_CHANNEL_ID))
 
 # Convert IDs to int if they exist
 if DISCORD_GUILD_ID:
@@ -22,6 +25,7 @@ if ALERT_CHANNEL_ID:
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
 # Optional Proxy URL
 NINER_ROUTER_URL = os.getenv("NINER_ROUTER_URL")

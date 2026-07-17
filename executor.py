@@ -1,5 +1,8 @@
 import asyncio
+import discord
 from utils.logger import logger
+from utils.llm import generate_response
+from database import get_setting
 
 TIER_AUTO = "auto"
 TIER_NOTIFY = "notify"
@@ -96,3 +99,36 @@ async def execute_command(command: str) -> tuple[str, int]:
     except Exception as e:
         logger.error(f"Error executing command '{command}': {str(e)}")
         return f"Exception occurred: {str(e)}", -1
+
+async def maybe_explain_error(command: str, output: str, exit_code: int, channel: discord.abc.Messageable):
+    """
+    Called after execution if exit_code != 0.
+    Fetches explanation from LLM and sends it to the same channel.
+    """
+    if exit_code == 0:
+        return
+        
+    try:
+        trunc_output = output
+        if len(trunc_output) > 1000:
+            trunc_output = trunc_output[:1000] + "..."
+            
+        prompt = (
+            f"Perintah VPS gagal dieksekusi:\n"
+            f"Command: {command}\n"
+            f"Exit Code: {exit_code}\n"
+            f"Output:\n{trunc_output}\n\n"
+            f"Berikan penjelasan singkat tentang kemungkinan penyebab error ini dan saran perbaikannya."
+        )
+        
+        model_alias = await get_setting('default_model') or "gemini"
+        
+        explanation = await generate_response(
+            model_alias, 
+            [{"role": "user", "content": prompt}], 
+            system_prompt="Anda adalah asisten DevOps. Jawab dengan singkat, jelas, dan fokus pada solusi."
+        )
+        
+        await channel.send(f"💡 **AI Error Explanation:**\n{explanation}")
+    except Exception as e:
+        logger.error(f"Error generating error explanation: {e}")

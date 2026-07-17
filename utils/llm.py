@@ -1,8 +1,70 @@
 import os
+import json
 import logging
 from config import GEMINI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY, NINER_ROUTER_URL, MODELS
+from utils.search import web_search
+from utils.documents import generate_document
+from database import save_tool_call, save_tool_result
 
 logger = logging.getLogger("discord_agent")
+
+WEB_SEARCH_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": "Cari informasi terkini di internet. Gunakan untuk pertanyaan tentang harga, berita, dokumentasi terbaru, atau fakta yang mungkin berubah setelah training data model.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Kata kunci pencarian"},
+                "max_results": {"type": "integer", "description": "Jumlah hasil (default 5)"}
+            },
+            "required": ["query"]
+        }
+    }
+}
+
+GENERATE_DOCUMENT_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "generate_document",
+        "description": "Buat file dokumen (docx, xlsx, pptx, atau pdf) dari konten yang diminta user, lalu kirim sebagai attachment Discord. Gunakan saat user secara eksplisit minta laporan/dokumen/file dalam format tertentu.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": ["docx", "xlsx", "pptx", "pdf"],
+                    "description": "Format file yang diminta"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Judul dokumen/laporan"
+                },
+                "sections": {
+                    "type": "array",
+                    "description": "Untuk format docx/pdf/pptx: list bagian dengan heading dan content. Untuk xlsx: gunakan field 'table_data' sebagai gantinya.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "heading": {"type": "string"},
+                            "content": {"type": "string"}
+                        }
+                    }
+                },
+                "table_data": {
+                    "type": "object",
+                    "description": "Khusus format xlsx: {\"headers\": [...], \"rows\": [[...], ...]}",
+                    "properties": {
+                        "headers": {"type": "array", "items": {"type": "string"}},
+                        "rows": {"type": "array"}
+                    }
+                }
+            },
+            "required": ["format", "title"]
+        }
+    }
+}
 
 async def generate_response(model_alias: str, messages: list[dict], system_prompt: str = None) -> str:
     """
@@ -43,6 +105,152 @@ async def generate_response(model_alias: str, messages: list[dict], system_promp
     except Exception as e:
         logger.error(f"Error generating response from {model_alias}: {str(e)}")
         raise
+
+async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id: str, system_prompt: str = None, max_iterations: int = 3, message_obj = None) -> tuple[str, list[str]]:
+    """
+    Wrapper around generate_response to handle tool calling loop.
+    message_obj is the Discord message to edit with progress indicator.
+    Returns (response_text, list_of_file_paths)
+    """
+    iteration = 0
+    current_messages = messages.copy()
+    generated_files = []
+    
+    # Send thinking indicator
+    indicator_msg = None
+    if message_obj:
+        indicator_msg = await message_obj.reply("🤔 Thinking...")
+        
+    while iteration < max_iterations:
+        iteration += 1
+        
+        # We need to use proxy specifically to pass tools, or implement tool usage for all SDKs.
+        # For simplicity in this batch, we will use the OpenAI compatible proxy format logic.
+        # If we have direct SDKs, we might need a custom tool handler. To keep it simple,
+        # we will enforce proxy format (which supports tools natively via OpenAI schema) for tools.
+        # But wait, generate_response handles proxy vs SDK internally. We will just use proxy if tools are needed,
+        # or implement generic openai-compatible tool calls.
+        
+        model_id = MODELS[model_alias]
+        
+        from openai import AsyncOpenAI
+        from config import NINER_ROUTER_KEY
+        
+        # Use proxy directly for tool calls to guarantee OpenAI schema compatibility
+        client = AsyncOpenAI(api_key=NINER_ROUTER_KEY if NINER_ROUTER_KEY else "dummy", base_url=NINER_ROUTER_URL if NINER_ROUTER_URL else "https://api.groq.com/openai/v1")
+        if not NINER_ROUTER_URL and model_alias == "groq":
+             client = AsyncOpenAI(api_key=GROQ_API_KEY)
+        
+        formatted_messages = []
+        if system_prompt:
+            formatted_messages.append({"role": "system", "content": system_prompt})
+            
+        for m in current_messages:
+            # Drop our custom 'tool_name' field before sending to standard API
+            fm = {"role": m["role"], "content": m["content"]}
+            if m["role"] == "tool_call":
+                fm["role"] = "assistant"
+                fm["tool_calls"] = [
+                    {
+                        "id": f"call_{m.get('tool_name', 'web_search')}_{iteration}",
+                        "type": "function",
+                        "function": {
+                            "name": m.get("tool_name", "web_search"),
+                            "arguments": m["content"]
+                        }
+                    }
+                ]
+                fm["content"] = None
+            elif m["role"] == "tool_result":
+                fm["role"] = "tool"
+                fm["tool_call_id"] = f"call_{m.get('tool_name', 'web_search')}_{iteration-1}"
+                fm["name"] = m.get("tool_name", "web_search")
+            formatted_messages.append(fm)
+            
+        try:
+            response = await client.chat.completions.create(
+                model=model_id,
+                messages=formatted_messages,
+                tools=[WEB_SEARCH_TOOL_SCHEMA, GENERATE_DOCUMENT_TOOL_SCHEMA],
+                tool_choice="auto"
+            )
+        except Exception as e:
+            if indicator_msg:
+                await indicator_msg.delete()
+            fallback_text = await generate_response(model_alias, messages, system_prompt)
+            return fallback_text, generated_files
+            
+        msg = response.choices[0].message
+        
+        if msg.tool_calls:
+            for tool_call in msg.tool_calls:
+                func_name = tool_call.function.name
+                func_args = tool_call.function.arguments
+                
+                await save_tool_call(thread_id, func_name, func_args, model_alias)
+                current_messages.append({"role": "tool_call", "content": func_args, "tool_name": func_name})
+                
+                
+                if func_name == "web_search":
+                    if indicator_msg:
+                        try:
+                            args_dict = json.loads(func_args)
+                            query = args_dict.get("query", "...")
+                            await indicator_msg.edit(content=f"🔍 Searching: \"{query}\"...")
+                        except:
+                            await indicator_msg.edit(content="🔍 Searching...")
+                            
+                    # Execute tool
+                    try:
+                        args = json.loads(func_args)
+                        query = args.get("query", "")
+                        max_res = args.get("max_results", 5)
+                        res = await web_search(query, max_res)
+                        res_str = json.dumps(res)
+                    except Exception as e:
+                        res_str = json.dumps({"error": str(e)})
+                        
+                elif func_name == "generate_document":
+                    if indicator_msg:
+                        try:
+                            args_dict = json.loads(func_args)
+                            format_type = args_dict.get("format", "document")
+                            title = args_dict.get("title", "...")
+                            await indicator_msg.edit(content=f"📄 Membuat dokumen {format_type}: \"{title}\"...")
+                        except:
+                            await indicator_msg.edit(content="📄 Membuat dokumen...")
+                            
+                    try:
+                        args = json.loads(func_args)
+                        res = await generate_document(
+                            args.get("format"),
+                            args.get("title"),
+                            args.get("sections"),
+                            args.get("table_data")
+                        )
+                        res_str = json.dumps(res)
+                        if "file_path" in res:
+                            generated_files.append(res["file_path"])
+                    except Exception as e:
+                        res_str = json.dumps({"error": str(e)})
+                else:
+                    res_str = json.dumps({"error": f"Unknown tool: {func_name}"})
+                        
+                # Save result
+                    # Truncate result if too long to save memory
+                    if len(res_str) > 3000:
+                        res_str = res_str[:3000] + "...(truncated)"
+                        
+                    await save_tool_result(thread_id, func_name, res_str, model_alias)
+                    current_messages.append({"role": "tool_result", "content": res_str, "tool_name": func_name})
+        else:
+            if indicator_msg:
+                await indicator_msg.delete()
+            return msg.content, generated_files
+            
+    if indicator_msg:
+        await indicator_msg.delete()
+    return "⚠️ Terlalu banyak iterasi pencarian. Silakan persempit pertanyaan Anda.", generated_files
 
 async def _generate_via_proxy(model_id: str, messages: list[dict], system_prompt: str = None) -> str:
     """Uses OpenAI compatible format via proxy URL."""

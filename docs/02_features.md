@@ -167,3 +167,16 @@ Alert tidak repeat dalam 30 menit untuk kondisi yang sama (cooldown).
 | `/settings` | Tampilkan semua settings aktif |
 | `/ping` | Cek bot online + latency |
 | `/help` | Daftar semua command |
+
+---
+
+## 6. Fitur Cerdas (RAM-Optimized)
+*(Baru ditambahkan)*
+1. **Auto Web Search**: Bot akan secara otomatis melakukan pencarian web melalui Tavily API jika Anda menanyakan hal yang membutuhkan koneksi internet atau info waktu-nyata.
+2. **Session Context Summarization**: Thread yang memiliki riwayat > 30 pesan akan otomatis diringkas untuk menghemat token memori konteks pada bot LLM.
+3. **Log Auto-Summarizer**: Hasil eksekusi log yang sangat panjang otomatis dirangkum berdasarkan anomali atau pesan *error* penting.
+4. **Command Semantic Search (`/history`)**: Anda bisa mencari riwayat command secara natural ("Command apa yang mengubah chmod?").
+5. **Daily Health Digest**: Secara otomatis bot mengirimkan summary kondisi VPS harian (pada UTC 0) berdasarkan eksekusi perintah harian dan alert sebelumnya.
+6. **Smart Explain Error**: Jika hasil command `/exec` (ataupun *natural language command*) Anda gagal / `exit_code != 0`, AI akan mengirim pesan penjelasan dan solusi otomatis.
+7. **Long Message Auto-Split**: Menghindari batasan limit *Discord* untuk pesan-pesan instruksi yang panjang (diberikan TL;DR secara singkat).
+8. **Auto Document Generation**: Mampu menggenerate dokumen laporan (format `.docx`, `.xlsx`, `.pptx`, `.pdf`) menggunakan ekstensi AI dan mengirimkannya langsung ke Discord Anda via `discord.File` dengan basis Python-native murni tanpa *browser-renderer*.

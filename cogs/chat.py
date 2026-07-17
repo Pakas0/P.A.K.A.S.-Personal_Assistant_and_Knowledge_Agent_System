@@ -5,7 +5,9 @@ import datetime
 from config import ALLOWED_USER_ID, MODELS
 from database import get_setting, get_history, save_message, clear_history
 from utils.logger import logger
-from utils.llm import generate_response
+from utils.llm import generate_response, call_llm_with_tools
+from utils.formatter import send_long_response
+from utils.summarizer import maybe_summarize_thread
 
 class Chat(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -82,6 +84,9 @@ class Chat(commands.Cog):
         
         async with message.channel.typing():
             try:
+                # 1. Summarize if needed before fetching history
+                await maybe_summarize_thread(thread_id, threshold=30)
+                
                 # Fetch history (last 20 messages)
                 history = await get_history(thread_id, limit=20)
                 
@@ -90,20 +95,15 @@ class Chat(commands.Cog):
                 
                 system_prompt = "You are P.A.K.A.S, a personal AI assistant and VPS manager for your owner. You are running as a Discord bot. Be helpful, concise, and technical."
                 
-                response_text = await generate_response(model_alias, messages, system_prompt=system_prompt)
+                # Use call_llm_with_tools to handle tool calls
+                response_text, generated_files = await call_llm_with_tools(model_alias, messages, thread_id, system_prompt, max_iterations=3, message_obj=message)
                 
                 # Save to DB
                 await save_message(thread_id, "user", combined_content, model_alias if override_used else None)
                 await save_message(thread_id, "assistant", response_text, model_alias)
                 
-                # Send response (split if > 2000 chars to avoid Discord limits)
-                if len(response_text) > 2000:
-                    # Very simple chunking
-                    chunks = [response_text[i:i+1950] for i in range(0, len(response_text), 1950)]
-                    for chunk in chunks:
-                        await message.channel.send(chunk)
-                else:
-                    await message.reply(response_text)
+                # Send response via formatter
+                await send_long_response(message, response_text, tldr_threshold=1500, model_alias=model_alias, file_paths=generated_files)
                     
             except Exception as e:
                 logger.error(f"Chat error: {str(e)}")
