@@ -1,7 +1,6 @@
 import asyncio
 import discord
 from utils.logger import logger
-from utils.llm import generate_response
 from database import get_setting
 
 TIER_AUTO = "auto"
@@ -122,6 +121,8 @@ async def maybe_explain_error(command: str, output: str, exit_code: int, channel
         )
         
         model_alias = await get_setting('default_model') or "gemini"
+        
+        from utils.llm import generate_response
         
         explanation = await generate_response(
             model_alias, 
