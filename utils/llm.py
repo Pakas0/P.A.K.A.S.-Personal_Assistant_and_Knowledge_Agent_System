@@ -131,212 +131,190 @@ async def generate_response(model_alias: str, messages: list[dict], system_promp
         logger.error(f"Error generating response from {model_alias}: {str(e)}")
         raise
 
-async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id: str, system_prompt: str = None, max_iterations: int = 3, message_obj = None) -> tuple[str, list[str]]:
+async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id: str, system_prompt: str = None, max_iterations: int = 6, message_obj = None) -> tuple[str, list[str]]:
     """
     Wrapper around generate_response to handle tool calling loop.
-    message_obj is the Discord message to edit with progress indicator.
+    Uses text-based tool emulation for all models to ensure universal compatibility.
+    The model responds with a ```tool_call``` JSON block which we parse and execute.
     Returns (response_text, list_of_file_paths)
     """
     iteration = 0
     current_messages = messages.copy()
     generated_files = []
     
-    # Send thinking indicator
+    # Build tool emulation system prompt suffix
+    TOOL_EMULATION_INSTRUCTIONS = """
+
+You have access to the following tools. To use a tool, respond ONLY with a JSON block in this EXACT format and nothing else before or after it:
+
+```tool_call
+{"tool": "<tool_name>", "args": {<args_json>}}
+```
+
+Available tools:
+1. execute_shell_command(command) — Run a bash/shell command on the VPS Linux server. Use for: checking RAM (free -m), disk (df -h), pm2 status (pm2 list), logs (pm2 logs <name> --lines 20), network, processes, etc.
+2. web_search(query, max_results) — Search the web for current information.
+3. generate_document(format, title, sections, table_data) — Generate a file (docx/xlsx/pptx/pdf).
+
+RULES:
+- If the user asks to check VPS/server status/pm2/resource, ALWAYS call execute_shell_command immediately.
+- After receiving a tool result, provide your final answer as normal text (no JSON block).
+- If you don't need any tool, respond normally without a JSON block.
+"""
+    
     indicator_msg = None
     if message_obj:
         indicator_msg = await message_obj.reply("🤔 Thinking...")
-        
+    
     while iteration < max_iterations:
         iteration += 1
         
-        # We need to use proxy specifically to pass tools, or implement tool usage for all SDKs.
-        # For simplicity in this batch, we will use the OpenAI compatible proxy format logic.
-        # If we have direct SDKs, we might need a custom tool handler. To keep it simple,
-        # we will enforce proxy format (which supports tools natively via OpenAI schema) for tools.
-        # But wait, generate_response handles proxy vs SDK internally. We will just use proxy if tools are needed,
-        # or implement generic openai-compatible tool calls.
         
-        model_id = MODELS[model_alias]
+        # --- Text-based Tool Emulation (works for ALL providers) ---
+        # Build augmented system prompt
+        augmented_system = (system_prompt or "") + TOOL_EMULATION_INSTRUCTIONS
         
-        from openai import AsyncOpenAI
-        from config import NINER_ROUTER_KEY
-        
-        # Use proxy directly for tool calls to guarantee OpenAI schema compatibility
-        client = AsyncOpenAI(api_key=NINER_ROUTER_KEY if NINER_ROUTER_KEY else "dummy", base_url=NINER_ROUTER_URL if NINER_ROUTER_URL else "https://api.groq.com/openai/v1")
-        if not NINER_ROUTER_URL and model_alias == "groq":
-             client = AsyncOpenAI(api_key=GROQ_API_KEY)
-        
-        formatted_messages = []
-        if system_prompt:
-            formatted_messages.append({"role": "system", "content": system_prompt})
-            
+        # Flatten all messages (including tool history) to plain user/assistant pairs
+        flat_messages = []
         for m in current_messages:
-            fm = {}
             if m["role"] == "tool_call":
-                if "tool_call_id" in m:
-                    # Retain native OpenAI format for the current loop
-                    fm["role"] = "assistant"
-                    fm["tool_calls"] = [
-                        {
-                            "id": m["tool_call_id"],
-                            "type": "function",
-                            "function": {
-                                "name": m.get("tool_name", "web_search"),
-                                "arguments": m["content"]
-                            }
-                        }
-                    ]
-                    fm["content"] = None
-                else:
-                    # Flatten historical DB tool calls to avoid 400 errors
-                    fm["role"] = "assistant"
-                    fm["content"] = f"*[Memanggil alat {m.get('tool_name', 'unknown')}: {m.get('content', '')}]*"
+                flat_messages.append({
+                    "role": "assistant",
+                    "content": f"```tool_call\n{{\"tool\": \"{m.get('tool_name')}\", \"args\": {m.get('content')}}}\n```"
+                })
             elif m["role"] == "tool_result":
                 content = m.get("content", "")
-                if len(content) > 1500:
-                    content = content[:1500] + "...(truncated)"
-                    
-                if "tool_call_id" in m:
-                    # Retain native OpenAI format for the current loop
-                    fm["role"] = "tool"
-                    fm["tool_call_id"] = m["tool_call_id"]
-                    fm["name"] = m.get("tool_name", "web_search")
-                    fm["content"] = content
-                else:
-                    # Flatten historical DB tool results
-                    fm["role"] = "user"
-                    fm["content"] = f"*[Hasil alat {m.get('tool_name', 'unknown')}]:*\n{content}"
+                if len(content) > 2000:
+                    content = content[:2000] + "...(truncated)"
+                flat_messages.append({
+                    "role": "user",
+                    "content": f"**[Tool Result: {m.get('tool_name')}]**\n{content}"
+                })
             else:
-                fm["role"] = m["role"]
-                fm["content"] = m["content"]
-                
-            formatted_messages.append(fm)
-            
+                flat_messages.append({"role": m["role"], "content": m["content"]})
+        
         try:
-            response = await client.chat.completions.create(
-                model=model_id,
-                messages=formatted_messages,
-                tools=[WEB_SEARCH_TOOL_SCHEMA, GENERATE_DOCUMENT_TOOL_SCHEMA, EXECUTE_COMMAND_TOOL_SCHEMA],
-                tool_choice="auto"
-            )
+            raw_response = await generate_response(model_alias, flat_messages, augmented_system)
         except Exception as e:
             if indicator_msg:
-                await indicator_msg.delete()
-            fallback_text = await generate_response(model_alias, messages, system_prompt)
-            return fallback_text, generated_files
-            
-        msg = response.choices[0].message
+                try:
+                    await indicator_msg.delete()
+                except Exception:
+                    pass
+            raise
         
-        if msg.tool_calls:
-            for tool_call in msg.tool_calls:
-                func_name = tool_call.function.name
-                func_args = tool_call.function.arguments
-                t_id = tool_call.id
-                
-                await save_tool_call(thread_id, func_name, func_args, model_alias)
-                current_messages.append({
-                    "role": "tool_call", 
-                    "content": func_args, 
-                    "tool_name": func_name,
-                    "tool_call_id": t_id
-                })
-                
-                
-                if func_name == "web_search":
-                    if indicator_msg:
-                        try:
-                            args_dict = json.loads(func_args)
-                            query = args_dict.get("query", "...")
-                            await indicator_msg.edit(content=f"🔍 Searching: \"{query}\"...")
-                        except:
-                            await indicator_msg.edit(content="🔍 Searching...")
-                            
-                    # Execute tool
-                    try:
-                        args = json.loads(func_args)
-                        query = args.get("query", "")
-                        max_res = args.get("max_results", 5)
-                        res = await web_search(query, max_res)
-                        res_str = json.dumps(res)
-                    except Exception as e:
-                        res_str = json.dumps({"error": str(e)})
-                        
-                elif func_name == "generate_document":
-                    if indicator_msg:
-                        try:
-                            args_dict = json.loads(func_args)
-                            format_type = args_dict.get("format", "document")
-                            title = args_dict.get("title", "...")
-                            await indicator_msg.edit(content=f"📄 Membuat dokumen {format_type}: \"{title}\"...")
-                        except:
-                            await indicator_msg.edit(content="📄 Membuat dokumen...")
-                            
-                    try:
-                        args = json.loads(func_args)
-                        res = await generate_document(
-                            args.get("format"),
-                            args.get("title"),
-                            args.get("sections"),
-                            args.get("table_data")
-                        )
-                        res_str = json.dumps(res)
-                        if "file_path" in res:
-                            generated_files.append(res["file_path"])
-                    except Exception as e:
-                        res_str = json.dumps({"error": str(e)})
-                        
-                elif func_name == "execute_shell_command":
-                    try:
-                        args_dict = json.loads(func_args)
-                        cmd = args_dict.get("command", "")
-                        
-                        if indicator_msg:
-                            await indicator_msg.edit(content=f"💻 Mengeksekusi: `{cmd}`...")
-                            
-                        # Security Check
-                        tier = classify_command(cmd)
-                        if tier == TIER_APPROVAL:
-                            res_str = json.dumps({
-                                "error": "Tindakan ditolak oleh sistem keamanan (Guardrails). Perintah ini bersifat destruktif/berisiko tinggi dan membutuhkan otorisasi manual. Beritahu user untuk menjalankan perintah ini secara eksplisit menggunakan slash command /exec atau /do."
-                            })
-                        else:
-                            # TIER_AUTO or TIER_NOTIFY
-                            output, exit_code = await execute_command(cmd)
-                            await log_command(cmd, tier, None, output, exit_code)
-                            
-                            res_dict = {
-                                "command": cmd,
-                                "exit_code": exit_code,
-                                "output": output
-                            }
-                            res_str = json.dumps(res_dict)
-                            
-                    except Exception as e:
-                        res_str = json.dumps({"error": str(e)})
-                        
-                else:
-                    res_str = json.dumps({"error": f"Unknown tool: {func_name}"})
-                        
-                # Save result
-                    # Truncate result if too long to save memory
-                    if len(res_str) > 3000:
-                        res_str = res_str[:3000] + "...(truncated)"
-                        
-                    await save_tool_result(thread_id, func_name, res_str, model_alias)
-                    current_messages.append({
-                        "role": "tool_result", 
-                        "content": res_str, 
-                        "tool_name": func_name,
-                        "tool_call_id": t_id
-                    })
-        else:
-            if indicator_msg:
-                await indicator_msg.delete()
-            return msg.content, generated_files
+        # Check if model wants to call a tool
+        tool_call_req = _parse_tool_call_from_text(raw_response)
+        
+        if tool_call_req:
+            func_name = tool_call_req.get("tool")
+            func_args_dict = tool_call_req.get("args", {})
+            func_args_str = json.dumps(func_args_dict)
             
+            logger.info(f"[Emulated tool call] {func_name}({func_args_str})")
+            await save_tool_call(thread_id, func_name, func_args_str, model_alias)
+            
+            res_str, file_path = await _execute_tool(func_name, func_args_str, indicator_msg)
+            if file_path:
+                generated_files.append(file_path)
+            
+            if len(res_str) > 3000:
+                res_str = res_str[:3000] + "...(truncated)"
+            await save_tool_result(thread_id, func_name, res_str, model_alias)
+            
+            current_messages.append({"role": "tool_call", "content": func_args_str, "tool_name": func_name})
+            current_messages.append({"role": "tool_result", "content": res_str, "tool_name": func_name})
+            # Continue loop so model sees the result and can compose final answer
+        else:
+            # No tool call → final response
+            if indicator_msg:
+                try:
+                    await indicator_msg.delete()
+                except Exception:
+                    pass
+            return raw_response, generated_files
+    
     if indicator_msg:
-        await indicator_msg.delete()
-    return "⚠️ Terlalu banyak iterasi pencarian. Silakan persempit pertanyaan Anda.", generated_files
+        try:
+            await indicator_msg.delete()
+        except Exception:
+            pass
+    return "⚠️ Terlalu banyak iterasi. Silakan coba lagi.", generated_files
+
+
+def _parse_tool_call_from_text(text: str) -> dict | None:
+    """Parse a ```tool_call ... ``` JSON block from model response text."""
+    import re
+    pattern = r"```tool_call\s*(\{.*?\})\s*```"
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+async def _execute_tool(func_name: str, func_args_str: str, indicator_msg=None) -> tuple[str, str | None]:
+    """Execute a named tool and return (result_str, file_path_or_None)."""
+    file_path = None
+    try:
+        args = json.loads(func_args_str)
+    except Exception:
+        args = {}
+    
+    if func_name == "web_search":
+        if indicator_msg:
+            try:
+                await indicator_msg.edit(content=f"🔍 Searching: \"{args.get('query', '...')}\"...")
+            except Exception:
+                pass
+        try:
+            res = await web_search(args.get("query", ""), args.get("max_results", 5))
+            res_str = json.dumps(res)
+        except Exception as e:
+            res_str = json.dumps({"error": str(e)})
+            
+    elif func_name == "generate_document":
+        if indicator_msg:
+            try:
+                await indicator_msg.edit(content=f"📄 Membuat dokumen {args.get('format', '')}...")
+            except Exception:
+                pass
+        try:
+            res = await generate_document(
+                args.get("format"),
+                args.get("title"),
+                args.get("sections"),
+                args.get("table_data")
+            )
+            res_str = json.dumps(res)
+            if "file_path" in res:
+                file_path = res["file_path"]
+        except Exception as e:
+            res_str = json.dumps({"error": str(e)})
+            
+    elif func_name == "execute_shell_command":
+        cmd = args.get("command", "")
+        if indicator_msg:
+            try:
+                await indicator_msg.edit(content=f"💻 Mengeksekusi: `{cmd}`...")
+            except Exception:
+                pass
+        try:
+            tier = classify_command(cmd)
+            if tier == TIER_APPROVAL:
+                res_str = json.dumps({"error": "Perintah ditolak oleh guardrail keamanan. Minta user menjalankan manual dengan /exec atau /do."})
+            else:
+                output, exit_code = await execute_command(cmd)
+                await log_command(cmd, tier, None, output, exit_code)
+                res_str = json.dumps({"command": cmd, "exit_code": exit_code, "output": output})
+        except Exception as e:
+            res_str = json.dumps({"error": str(e)})
+    else:
+        res_str = json.dumps({"error": f"Unknown tool: {func_name}"})
+    
+    return res_str, file_path
 
 async def _generate_via_proxy(model_id: str, messages: list[dict], system_prompt: str = None) -> str:
     """Uses OpenAI compatible format via proxy URL."""
