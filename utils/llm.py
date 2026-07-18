@@ -167,15 +167,39 @@ async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id:
         for m in current_messages:
             fm = {}
             if m["role"] == "tool_call":
-                fm["role"] = "assistant"
-                fm["content"] = f"*[Memanggil alat {m.get('tool_name', 'unknown')}: {m.get('content', '')}]*"
+                if "tool_call_id" in m:
+                    # Retain native OpenAI format for the current loop
+                    fm["role"] = "assistant"
+                    fm["tool_calls"] = [
+                        {
+                            "id": m["tool_call_id"],
+                            "type": "function",
+                            "function": {
+                                "name": m.get("tool_name", "web_search"),
+                                "arguments": m["content"]
+                            }
+                        }
+                    ]
+                    fm["content"] = None
+                else:
+                    # Flatten historical DB tool calls to avoid 400 errors
+                    fm["role"] = "assistant"
+                    fm["content"] = f"*[Memanggil alat {m.get('tool_name', 'unknown')}: {m.get('content', '')}]*"
             elif m["role"] == "tool_result":
-                fm["role"] = "user"
-                # Truncate content slightly if needed for history
                 content = m.get("content", "")
                 if len(content) > 1500:
                     content = content[:1500] + "...(truncated)"
-                fm["content"] = f"*[Hasil alat {m.get('tool_name', 'unknown')}]:*\n{content}"
+                    
+                if "tool_call_id" in m:
+                    # Retain native OpenAI format for the current loop
+                    fm["role"] = "tool"
+                    fm["tool_call_id"] = m["tool_call_id"]
+                    fm["name"] = m.get("tool_name", "web_search")
+                    fm["content"] = content
+                else:
+                    # Flatten historical DB tool results
+                    fm["role"] = "user"
+                    fm["content"] = f"*[Hasil alat {m.get('tool_name', 'unknown')}]:*\n{content}"
             else:
                 fm["role"] = m["role"]
                 fm["content"] = m["content"]
@@ -201,12 +225,14 @@ async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id:
             for tool_call in msg.tool_calls:
                 func_name = tool_call.function.name
                 func_args = tool_call.function.arguments
+                t_id = tool_call.id
                 
                 await save_tool_call(thread_id, func_name, func_args, model_alias)
                 current_messages.append({
                     "role": "tool_call", 
                     "content": func_args, 
-                    "tool_name": func_name
+                    "tool_name": func_name,
+                    "tool_call_id": t_id
                 })
                 
                 
@@ -294,7 +320,8 @@ async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id:
                     current_messages.append({
                         "role": "tool_result", 
                         "content": res_str, 
-                        "tool_name": func_name
+                        "tool_name": func_name,
+                        "tool_call_id": t_id
                     })
         else:
             if indicator_msg:
