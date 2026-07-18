@@ -145,21 +145,23 @@ async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id:
     # Build tool emulation system prompt suffix
     TOOL_EMULATION_INSTRUCTIONS = """
 
-You have access to the following tools. To use a tool, respond ONLY with a JSON block in this EXACT format and nothing else before or after it:
+## TOOLS
+You have these tools. To call one, output ONLY the JSON block below — no text before or after it:
 
 ```tool_call
-{"tool": "<tool_name>", "args": {<args_json>}}
+{"tool": "<name>", "args": {<args>}}
 ```
 
-Available tools:
-1. execute_shell_command(command) — Run a bash/shell command on the VPS Linux server. Use for: checking RAM (free -m), disk (df -h), pm2 status (pm2 list), logs (pm2 logs <name> --lines 20), network, processes, etc.
-2. web_search(query, max_results) — Search the web for current information.
-3. generate_document(format, title, sections, table_data) — Generate a file (docx/xlsx/pptx/pdf).
+Tools:
+- execute_shell_command(command) → run bash on the VPS. Chain commands with && to minimize round-trips (e.g. "pm2 list && free -m").
+- web_search(query, max_results=5) → search the web.
+- generate_document(format, title, sections, table_data) → create docx/xlsx/pptx/pdf.
 
-RULES:
-- If the user asks to check VPS/server status/pm2/resource, ALWAYS call execute_shell_command immediately.
-- After receiving a tool result, provide your final answer as normal text (no JSON block).
-- If you don't need any tool, respond normally without a JSON block.
+## STRICT RULES
+1. NEVER output any text before the ```tool_call``` block — call the tool immediately.
+2. Combine related shell checks into ONE command using && to save iterations.
+3. After receiving a [Tool Result], respond in plain text — do NOT call another tool unless absolutely necessary.
+4. If no tool is needed, reply normally without any JSON block.
 """
     
     indicator_msg = None
