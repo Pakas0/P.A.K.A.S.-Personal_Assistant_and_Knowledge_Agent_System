@@ -58,7 +58,13 @@ GENERATE_DOCUMENT_TOOL_SCHEMA = {
                     "description": "Khusus format xlsx: {\"headers\": [...], \"rows\": [[...], ...]}",
                     "properties": {
                         "headers": {"type": "array", "items": {"type": "string"}},
-                        "rows": {"type": "array"}
+                        "rows": {
+                            "type": "array",
+                            "items": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            }
+                        }
                     }
                 }
             },
