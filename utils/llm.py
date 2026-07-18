@@ -4,8 +4,8 @@ import logging
 from config import GEMINI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY, NINER_ROUTER_URL, MODELS
 from utils.search import web_search
 from utils.documents import generate_document
-from executor import classify_command, execute_command, TIER_APPROVAL
-from database import save_tool_call, save_tool_result, log_command
+from executor import classify_command, execute_command, TIER_APPROVAL, TIER_NOTIFY
+from database import save_tool_call, save_tool_result, log_command, save_message
 
 logger = logging.getLogger("discord_agent")
 
@@ -131,6 +131,14 @@ async def generate_response(model_alias: str, messages: list[dict], system_promp
         logger.error(f"Error generating response from {model_alias}: {str(e)}")
         raise
 
+async def _build_progress_summary(tool_calls_log: list[dict]) -> str:
+    """Build a short summary of tool calls attempted in the current loop."""
+    lines = []
+    for i, tc in enumerate(tool_calls_log, 1):
+        lines.append(f"{i}. {tc['tool_name']}({tc['args']}) -> {tc['result_summary']}")
+    return "\n".join(lines)
+
+
 async def call_llm_with_tools(model_alias: str, messages: list[dict], thread_id: str, system_prompt: str = None, max_iterations: int = 6, message_obj = None) -> tuple[str, list[str]]:
     """
     Wrapper around generate_response to handle tool calling loop.
@@ -167,6 +175,8 @@ Tools:
     indicator_msg = None
     if message_obj:
         indicator_msg = await message_obj.reply("🤔 Thinking...")
+    
+    tool_calls_log = []
     
     while iteration < max_iterations:
         iteration += 1
@@ -220,6 +230,12 @@ Tools:
             if file_path:
                 generated_files.append(file_path)
             
+            tool_calls_log.append({
+                "tool_name": func_name,
+                "args": func_args_dict,
+                "result_summary": res_str[:100]
+            })
+            
             if len(res_str) > 3000:
                 res_str = res_str[:3000] + "...(truncated)"
             await save_tool_result(thread_id, func_name, res_str, model_alias)
@@ -241,7 +257,16 @@ Tools:
             await indicator_msg.delete()
         except Exception:
             pass
-    return "⚠️ Terlalu banyak iterasi. Silakan coba lagi.", generated_files
+
+    progress_summary = await _build_progress_summary(tool_calls_log)
+    fallback_text = (
+        f"⚠️ Task belum selesai dalam {max_iterations} langkah. Progress sejauh ini:\n"
+        f"{progress_summary}\n\n"
+        f"Ketik \"lanjutkan\" kalau ingin saya teruskan dari sini."
+    )
+    await save_message(thread_id, role="assistant", content=fallback_text, model=model_alias)
+
+    return fallback_text, generated_files
 
 
 def _parse_tool_call_from_text(text: str) -> dict | None:
@@ -311,6 +336,13 @@ async def _execute_tool(func_name: str, func_args_str: str, indicator_msg=None) 
                 output, exit_code = await execute_command(cmd)
                 await log_command(cmd, tier, None, output, exit_code)
                 res_str = json.dumps({"command": cmd, "exit_code": exit_code, "output": output})
+
+                if tier == TIER_NOTIFY and indicator_msg:
+                    try:
+                        notify_text = f"⚠️ Executed (auto via chat): `{cmd}`"
+                        await indicator_msg.channel.send(notify_text)
+                    except Exception:
+                        pass
         except Exception as e:
             res_str = json.dumps({"error": str(e)})
     else:

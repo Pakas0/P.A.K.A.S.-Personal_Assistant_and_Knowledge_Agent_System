@@ -120,11 +120,20 @@ async def get_history(thread_id: str, limit: int = 20) -> list[dict]:
                 covers_up_to = row["covers_up_to"]
 
         async with db.execute('''
-            SELECT role, content, tool_name FROM conversations 
+            SELECT id, role, content, tool_name FROM conversations 
             WHERE thread_id = ? AND id > ?
             ORDER BY id DESC LIMIT ?
         ''', (thread_id, covers_up_to, limit)) as cursor:
             rows = await cursor.fetchall()
+            
+            # FIX C: If the latest message is the fallback marker, fetch more history to ensure we get all tool calls for this task
+            if rows and rows[0]["role"] == "assistant" and rows[0]["content"].startswith("⚠️ Task belum selesai dalam"):
+                async with db.execute('''
+                    SELECT id, role, content, tool_name FROM conversations 
+                    WHERE thread_id = ? AND id > ?
+                    ORDER BY id DESC LIMIT 50
+                ''', (thread_id, covers_up_to)) as ext_cursor:
+                    rows = await ext_cursor.fetchall()
             
             history = []
             if summary_text:

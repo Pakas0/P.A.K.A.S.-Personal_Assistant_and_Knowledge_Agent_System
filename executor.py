@@ -26,6 +26,8 @@ def classify_command(command: str) -> str:
         "drop table", "drop database", "delete from",
         "crontab -r",
         "apt remove nginx", "apt remove python3", "apt purge",
+        "find / -delete", "-delete", "-exec",
+        "| sh", "| bash", "|sh", "|bash",
     ]
     for pattern in DANGEROUS_PATTERNS:
         if pattern in cmd:
@@ -41,6 +43,7 @@ def classify_command(command: str) -> str:
         "pm2 restart", "pm2 start", "pm2 stop",
         "systemctl restart", "systemctl start", "systemctl reload",
         "cloudflared",
+        "curl", "find",
     ]
     for pattern in NOTIFY_PATTERNS:
         if pattern in cmd:
@@ -48,12 +51,12 @@ def classify_command(command: str) -> str:
 
     # Tier ✅ — AUTO (Safe / Read-only)
     SAFE_PATTERNS = [
-        "ls", "cat", "head", "tail", "grep", "find", "locate",
+        "ls", "cat", "head", "tail", "grep",
         "df", "du", "free", "top", "htop", "ps", "uptime", "env", "printenv", "echo",
         "systemctl status", "pm2 status", "pm2 list", "pm2 logs",
         "git status", "git log", "git diff", "git branch",
-        "curl", "wget --spider", "ping", "netstat", "ss", "nslookup", "dig", "whois",
-        "journalctl", "uname", "whoami", "id", "pwd", "nginx -t"
+        "wget --spider", "ping", "netstat", "ss", "nslookup", "dig", "whois",
+        "journalctl", "uname", "whoami", "id", "pwd", "nginx -t", "locate"
     ]
     
     # Needs to match prefix or word boundary to prevent accidental matching
